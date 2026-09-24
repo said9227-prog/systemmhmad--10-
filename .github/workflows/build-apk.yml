@@ -6,12 +6,6 @@ on:
       - main
 
   workflow_dispatch:
-    inputs:
-      bootstrap_keystore:
-        description: 'Create and upload the permanent debug.keystore'
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -19,232 +13,10 @@ permissions:
 jobs:
 
   # ================================================================
-  # JOB 1: Bootstrap permanent debug keystore
-  # ================================================================
-  bootstrap-keystore:
-    name: Bootstrap Permanent Debug Keystore
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_keystore == true }}
-    runs-on: ubuntu-latest
-
-    steps:
-
-      # ------------------------------------------------------------
-      # 1. Checkout
-      # ------------------------------------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      # ------------------------------------------------------------
-      # 2. Setup Java 17
-      # ------------------------------------------------------------
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-
-      # ------------------------------------------------------------
-      # 3. Create permanent debug.keystore
-      # ------------------------------------------------------------
-      - name: Create permanent debug keystore
-        shell: bash
-        run: |
-          set -e
-
-          KEYSTORE="$HOME/.android/debug.keystore"
-
-          echo "============================================================"
-          echo "CREATING PERMANENT DEBUG KEYSTORE"
-          echo "============================================================"
-
-          mkdir -p "$HOME/.android"
-
-          # --------------------------------------------------------
-          # If a debug.keystore already exists in repository,
-          # use it instead of generating another one.
-          # --------------------------------------------------------
-          if [ -f "./debug.keystore" ]; then
-
-            echo "Repository debug.keystore found."
-            echo "Using repository keystore."
-
-            cp "./debug.keystore" "$KEYSTORE"
-
-          else
-
-            echo "No repository debug.keystore found."
-            echo "Generating a new permanent debug keystore."
-
-            keytool -genkeypair \
-              -v \
-              -keystore "$KEYSTORE" \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000
-
-          fi
-
-
-      # ------------------------------------------------------------
-      # 4. Verify keystore
-      # ------------------------------------------------------------
-      - name: Verify permanent debug keystore
-        shell: bash
-        run: |
-          set -e
-
-          KEYSTORE="$HOME/.android/debug.keystore"
-
-          echo "============================================================"
-          echo "VERIFYING PERMANENT DEBUG KEYSTORE"
-          echo "============================================================"
-
-          if [ ! -f "$KEYSTORE" ]; then
-            echo "ERROR: debug.keystore was not created."
-            exit 1
-          fi
-
-          if [ ! -s "$KEYSTORE" ]; then
-            echo "ERROR: debug.keystore is empty."
-            exit 1
-          fi
-
-          if ! keytool -list \
-            -keystore "$KEYSTORE" \
-            -storepass android \
-            -alias androiddebugkey > /dev/null 2>&1; then
-
-            echo "ERROR: debug.keystore is invalid."
-            exit 1
-          fi
-
-          echo "Keystore structure verified successfully."
-
-
-      # ------------------------------------------------------------
-      # 5. Display SHA-1
-      # ------------------------------------------------------------
-      - name: Display keystore SHA-1
-        shell: bash
-        run: |
-          set -e
-
-          KEYSTORE="$HOME/.android/debug.keystore"
-
-          echo ""
-          echo "============================================================"
-          echo "PERMANENT DEBUG KEYSTORE SHA-1"
-          echo "============================================================"
-
-          keytool -list \
-            -v \
-            -keystore "$KEYSTORE" \
-            -storepass android \
-            -alias androiddebugkey \
-            | grep -i "SHA1:"
-
-          echo ""
-          echo "============================================================"
-          echo "IMPORTANT"
-          echo "============================================================"
-          echo ""
-          echo "This SHA-1 belongs to the permanent debug.keystore."
-          echo ""
-          echo "Do NOT generate another keystore."
-          echo "Do NOT modify this keystore."
-          echo "Keep this file safe."
-          echo ""
-
-
-      # ------------------------------------------------------------
-      # 6. Copy keystore into workspace
-      # ------------------------------------------------------------
-      - name: Prepare keystore artifact
-        shell: bash
-        run: |
-          set -e
-
-          ARTIFACT_DIR="${{ github.workspace }}/stable-debug-keystore"
-
-          mkdir -p "$ARTIFACT_DIR"
-
-          cp \
-            "$HOME/.android/debug.keystore" \
-            "$ARTIFACT_DIR/debug.keystore"
-
-          echo "============================================================"
-          echo "KEYSTORE ARTIFACT PREPARED"
-          echo "============================================================"
-
-          ls -lh "$ARTIFACT_DIR/debug.keystore"
-
-
-      # ------------------------------------------------------------
-      # 7. Upload debug.keystore as Artifact
-      # ------------------------------------------------------------
-      - name: Upload stable debug keystore
-        uses: actions/upload-artifact@v4
-        with:
-          name: stable-debug-keystore
-          path: ${{ github.workspace }}/stable-debug-keystore/debug.keystore
-          if-no-files-found: error
-          retention-days: 1
-
-
-      # ------------------------------------------------------------
-      # 8. Finished
-      # ------------------------------------------------------------
-      - name: Bootstrap completed
-        shell: bash
-        run: |
-          echo ""
-          echo "============================================================"
-          echo "BOOTSTRAP COMPLETED SUCCESSFULLY"
-          echo "============================================================"
-          echo ""
-          echo "Artifact:"
-          echo "stable-debug-keystore"
-          echo ""
-          echo "File:"
-          echo "debug.keystore"
-          echo ""
-          echo "Download this Artifact before it expires."
-          echo ""
-          echo "Next step:"
-          echo "Convert debug.keystore to Base64 in Termux."
-          echo ""
-          echo "Then create GitHub Secret:"
-          echo "DEBUG_KEYSTORE_BASE64"
-          echo ""
-          echo "============================================================"
-
-
-  # ================================================================
-  # JOB 2: Build and Release APK
+  # JOB: Build and Release APK
   # ================================================================
   build-and-release:
     name: Build and Release Debug APK
-
-    # --------------------------------------------------------------
-    # Run for:
-    # - normal push to main
-    # - manual workflow when bootstrap_keystore = false
-    # --------------------------------------------------------------
-    if: >-
-      ${{
-        github.event_name == 'push' ||
-        (
-          github.event_name == 'workflow_dispatch' &&
-          inputs.bootstrap_keystore == false
-        )
-      }}
-
     runs-on: ubuntu-latest
 
     steps:
@@ -349,18 +121,11 @@ jobs:
             echo ""
             echo "The permanent signing keystore has not been configured."
             echo ""
-            echo "If this is the first setup:"
-            echo ""
-            echo "1. Run workflow manually."
-            echo "2. Set:"
-            echo "   bootstrap_keystore = true"
-            echo "3. Download stable-debug-keystore."
-            echo "4. Extract debug.keystore."
-            echo "5. Convert it to Base64 in Termux."
-            echo "6. Create GitHub Secret:"
-            echo "   DEBUG_KEYSTORE_BASE64"
+            echo "Create the GitHub Secret:"
+            echo "DEBUG_KEYSTORE_BASE64"
             echo ""
             echo "BUILD STOPPED."
+
             exit 1
           fi
 
@@ -377,6 +142,7 @@ jobs:
             echo ""
             echo "ERROR: Failed to decode DEBUG_KEYSTORE_BASE64."
             echo "The Secret does not contain valid Base64 data."
+
             exit 1
           fi
 
@@ -393,11 +159,12 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Permanent debug.keystore restored successfully."
 
 
       # ============================================================
-      # 6. Verify keystore and get SHA-1
+      # 6. Verify permanent signing keystore
       # ============================================================
       - name: Verify permanent signing keystore
         shell: bash
@@ -422,6 +189,7 @@ jobs:
             echo "Keystore password: android"
             echo "Alias: androiddebugkey"
             echo "Key password: android"
+
             exit 1
           fi
 
@@ -505,9 +273,19 @@ jobs:
           echo "BUILDING DEBUG APK"
           echo "============================================================"
 
-          gradle :app:assembleDebug \
-            --stacktrace \
-            --no-daemon
+          if [ -f "./gradlew" ]; then
+
+            ./gradlew :app:assembleDebug \
+              --stacktrace \
+              --no-daemon
+
+          else
+
+            gradle :app:assembleDebug \
+              --stacktrace \
+              --no-daemon
+
+          fi
 
           echo ""
           echo "Gradle build completed successfully."
